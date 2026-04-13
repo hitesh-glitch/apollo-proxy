@@ -5,7 +5,7 @@ const app = express();
 
 app.use(express.json());
 
-// CORS — allow all origins
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
@@ -14,32 +14,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Serve the Dmand app as static HTML ──
+// Serve app.js with long cache + gzip
+app.get('/app.js', (req, res) => {
+  res.set({
+    'Cache-Control': 'public, max-age=3600',
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Vary': 'Accept-Encoding'
+  });
+  res.sendFile(path.join(__dirname, 'app.js'));
+});
+
+// Serve index.html (no cache - always fresh)
 app.get('/', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Proxy Apollo requests
+// Apollo proxy
 app.all('/apollo/*', async (req, res) => {
   try {
     const apolloPath = req.path.replace('/apollo', '');
     const qs = req.url.includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
     const url = 'https://api.apollo.io' + apolloPath + qs;
     const key = req.headers['x-api-key'] || '';
-
-    const body = ['POST','PUT','PATCH'].includes(req.method)
-      ? JSON.stringify(req.body) : undefined;
-
+    const body = ['POST','PUT','PATCH'].includes(req.method) ? JSON.stringify(req.body) : undefined;
     const r = await fetch(url, {
       method: req.method,
-      headers: {
-        'X-Api-Key': key,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: { 'X-Api-Key': key, 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body,
     });
-
     const data = await r.text();
     res.status(r.status).set('Content-Type', 'application/json').send(data);
   } catch (e) {
@@ -50,4 +53,4 @@ app.all('/apollo/*', async (req, res) => {
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Dmand proxy+app running on port', PORT));
+app.listen(PORT, () => console.log('Dmand running on port', PORT));
