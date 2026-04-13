@@ -4250,6 +4250,7 @@ let DB = {
 let pollTimer = null;
 let pollPaused = false;
 let pollRunning = false; // guard against concurrent polls
+let currentPage = 'home'; // track active page for render skip optimization
 var _expandedEventGroups = {}; // domain -> bool (undefined=expanded by default)
 var _expandedEvents = {};      // event_id -> bool
 let proxyOk = false;
@@ -5077,6 +5078,7 @@ function initTheme(){
 function toggleTheme(){ cycleTheme(); }
 
 function showPage(name,el) {
+  currentPage = name;
   ['home','signals','events','companies','contacts','campaigns','keys','icp','settings'].forEach(p=>{
     document.getElementById('page-'+p).style.display=p===name?'':'none';
   });
@@ -6666,7 +6668,7 @@ async function pollSignal(sig){
     DB.events.unshift(newEv);
     real++;
 
-    setTimeout(()=>enrichEvent(eid), real*600);
+    setTimeout(()=>enrichEvent(eid), real*3000); // 3s stagger to prevent concurrent GPT flood
 
     log('New event: ✓ ['+sig.name.slice(0,20)+'] company="'+companyName+'" domain="'+companyDomain+'" — '+outputText.slice(0,60),'green');
   }
@@ -7377,6 +7379,7 @@ function deleteSelectedContacts(){
 }
 
 function renderContacts(resetPage){
+  if(typeof currentPage !== 'undefined' && currentPage !== 'contacts') return;
   if(resetPage !== false) contactPage = 0;
   if(!DB.contacts) DB.contacts=[];
   if(!DB.companies) DB.companies=[];
@@ -7895,6 +7898,7 @@ function renderSignals(){
 }
 
 function renderEvents(){
+  if(typeof currentPage !== 'undefined' && currentPage !== 'events' && currentPage !== 'home') return;
   const el=document.getElementById('event-list');
   const realCount=DB.events.filter(e=>e.type==='event').length;
   document.getElementById('nb-events').textContent=realCount;
@@ -10261,6 +10265,7 @@ function exportCompaniesCSV(){
 }
 
 function renderCompanies(){
+  if(typeof currentPage !== 'undefined' && currentPage !== 'companies') return;
   if(!DB.companies) DB.companies=[];
   if(!DB.autoboundKeys) DB.autoboundKeys=[];
   var nbEl=document.getElementById('nb-companies');
