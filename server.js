@@ -1,5 +1,6 @@
 const express = require('express');
 const fetch = require('node-fetch');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -11,6 +12,11 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Headers', 'Content-Type,X-Api-Key,Authorization,Accept,Cache-Control');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
+});
+
+// ── Serve the Dmand app as static HTML ──
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Proxy Apollo requests
@@ -44,4 +50,4 @@ app.all('/apollo/*', async (req, res) => {
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Apollo proxy running on port', PORT));
+app.listen(PORT, () => console.log('Dmand proxy+app running on port', PORT));
