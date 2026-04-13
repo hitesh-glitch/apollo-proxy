@@ -38,6 +38,19 @@ let DB = {
 let pollTimer = null;
 let pollPaused = false;
 let pollRunning = false; // guard against concurrent polls
+let pollWorker = null; // Web Worker for background polling
+
+function getPollWorker(){
+  if(!pollWorker || pollWorker._dead){
+    pollWorker = new Worker('/poll-worker.js');
+    pollWorker._dead = false;
+    pollWorker.onerror = function(e){
+      log('Poll worker error: '+e.message,'red');
+      pollWorker._dead = true;
+    };
+  }
+  return pollWorker;
+}
 let currentPage = 'home'; // track active page for render skip optimization
 var _expandedEventGroups = {}; // domain -> bool (undefined=expanded by default)
 var _expandedEvents = {};      // event_id -> bool
@@ -2501,18 +2514,58 @@ async function pollAllNow(){
   const startTime = Date.now();
   document.getElementById('poll-indicator').style.display='flex';
 
-  // Sequential polling — prevents 6 simultaneous large responses blocking main thread
-  const results = [];
-  for(const sig of active){
-    try{
-      const r = await pollSignal(sig);
-      results.push(r);
-    }catch(e){
-      log('Unhandled error polling "'+sig.name+'": '+e.message,'red');
-      results.push({real:0,completions:0,errors:1});
-    }
-    await new Promise(r=>setTimeout(r,0)); // yield between each monitor
-  }
+  // Use Web Worker for polling — completely off main thread
+  const results = await new Promise(function(resolve){
+    const worker = getPollWorker();
+    const sigResults = {};
+    active.forEach(function(s){ sigResults[s.id]={real:0,completions:0,errors:0}; });
+
+    const key = getActiveKey();
+    const keyVal = key ? (key.key||'') : '';
+
+    worker.onmessage = function(e){
+      const d = e.data;
+      if(d.type === 'signal_result'){
+        const sig = active.find(function(s){return s.id===d.signalId;});
+        if(!sig) return;
+        // Process new events on main thread (lightweight - already filtered)
+        d.newEvents.forEach(function(ev){
+          const exists = DB.events.some(function(e){return e.event_id===ev.event_id;});
+          if(!exists){
+            DB.events.unshift(ev);
+            sigResults[d.signalId].real++;
+            totalReal++;
+            setTimeout(()=>enrichEvent(ev.event_id), totalReal*3000);
+            log('New event: ✓ ['+sig.name.slice(0,20)+'] '+ev.output.slice(0,60),'green');
+          }
+        });
+        sigResults[d.signalId].completions = d.completions;
+        totalComp += d.completions;
+        var parts=[];
+        if(d.newEvents.length) parts.push(d.newEvents.length+' new');
+        if(d.completions) parts.push(d.completions+' completions (no signal)');
+        log('Poll "'+sig.name.slice(0,22)+'" — '+d.rawCount+' raw event(s) returned','gray');
+        if(parts.length) log('Poll "'+sig.name.slice(0,22)+'" — '+parts.join(' · '),'gray');
+      }
+      if(d.type === 'error'){
+        const sig = active.find(function(s){return s.id===d.signalId;});
+        log('Poll error "'+(sig?sig.name:'?')+'" — '+(d.message||'HTTP '+d.status),'red');
+        if(sig) sigResults[sig.id].errors++;
+        totalErr++;
+      }
+      if(d.type === 'done'){
+        resolve(Object.values(sigResults));
+      }
+    };
+
+    worker.postMessage({
+      type: 'poll',
+      signals: active.map(function(s){return {id:s.id,name:s.name,monitor_id:s.monitor_id,category:s.category};}),
+      proxy: PROXY,
+      apiKey: keyVal,
+      lookback: DB.settings.lookback||'3d'
+    });
+  });
 
   const elapsed = ((Date.now()-startTime)/1000).toFixed(1);
   let totalReal=0, totalComp=0, totalErr=0;
