@@ -14,8 +14,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve app.js with long cache + gzip
+// Serve static JS files with cache
 app.get('/app.js', (req, res) => {
+  res.set({'Cache-Control':'public, max-age=3600','Content-Type':'application/javascript; charset=utf-8'});
+  res.sendFile(path.join(__dirname, 'app.js'));
+});
+app.get('/poll-worker.js', (req, res) => {
   res.set({
     'Cache-Control': 'public, max-age=3600',
     'Content-Type': 'application/javascript; charset=utf-8',
