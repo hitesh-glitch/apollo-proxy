@@ -1,5 +1,5 @@
 const DEFAULT_PROXY = 'http://localhost:8765';
-let PROXY = localStorage.getItem('dmand_proxy_url') || DEFAULT_PROXY;
+let PROXY = window.localStorage.getItem('dmand_proxy_url') || DEFAULT_PROXY;
 const LS_KEY = 'dmand_v2';
 
 const IST_OPTS_DATETIME = { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true };
@@ -115,8 +115,8 @@ function init() {
       renderAll(); updateMetrics(); updateKeySidebarDot(); startCloudAutoSave();
       populateIcpSignalDropdown();
       if(DB.settings&&DB.settings.proxyUrl){
-        if(!localStorage.getItem('dmand_proxy_url')||localStorage.getItem('dmand_proxy_url')===DEFAULT_PROXY){
-          localStorage.setItem('dmand_proxy_url',DB.settings.proxyUrl);
+        if(!window.localStorage.getItem('dmand_proxy_url')||window.localStorage.getItem('dmand_proxy_url')===DEFAULT_PROXY){
+          window.localStorage.setItem('dmand_proxy_url',DB.settings.proxyUrl);
           PROXY=DB.settings.proxyUrl;
           var proxyEl=document.getElementById('s-proxy-url');
           if(proxyEl) proxyEl.value=DB.settings.proxyUrl;
@@ -335,7 +335,7 @@ async function cloudLoad() {
       if(!DB.hrCampaigns) DB.hrCampaigns=[];
       window._localDataExists=true; // cloud data now in DB
       window._justLoadedFromCloud=true;
-      save(); // Write cloud data to localStorage immediately
+      save(); // Write cloud data to window.localStorage immediately
       setTimeout(function(){window._justLoadedFromCloud=false;},10000);
       cloudSyncEnabled = true;
 
@@ -435,14 +435,14 @@ async function forceCloudSave() {
 
 function load() {
   try {
-    const r=localStorage.getItem(LS_KEY);
+    const r=window.localStorage.getItem(LS_KEY);
     if(r){ DB={...DB,...JSON.parse(r)}; migratePersonaFunctions(); window._localDataExists=true; }
     else { window._localDataExists=false; } // fresh file — don't save until cloud loads
   } catch(e){ window._localDataExists=false; }
 }
 
 function saveAndSync() {
-  save(); // localStorage + starts debounce
+  save(); // window.localStorage + starts debounce
   if(cloudSyncEnabled) {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
@@ -454,10 +454,10 @@ function saveAndSync() {
 var _lsTimer=null;
 function save() {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(DB));
+    window.localStorage.setItem(LS_KEY, JSON.stringify(DB));
     var el=document.getElementById('save-label');
     if(el) el.textContent='Saved · '+istTime(new Date().toISOString());
-  } catch(e){ showAlert('localStorage full! Export a backup.','error',0); }
+  } catch(e){ showAlert('window.localStorage full! Export a backup.','error',0); }
   if(cloudSyncEnabled && !window._justLoadedFromCloud) {
     cloudSyncPending = true;
     clearTimeout(cloudSyncTimer);
@@ -854,7 +854,7 @@ var THEME_META = {
 };
 
 function cycleTheme(){
-  var cur = localStorage.getItem('dmand_theme')||'light';
+  var cur = window.localStorage.getItem('dmand_theme')||'light';
   var next = THEME_META[cur]?THEME_META[cur].next:'dark';
   applyTheme(next);
 }
@@ -863,7 +863,7 @@ function applyTheme(theme){
   document.body.classList.remove('dark','berserk');
   if(theme==='dark') document.body.classList.add('dark');
   if(theme==='berserk') document.body.classList.add('berserk');
-  localStorage.setItem('dmand_theme', theme);
+  window.localStorage.setItem('dmand_theme', theme);
   var meta = THEME_META[theme]||THEME_META.light;
   var iconEl = document.getElementById('theme-toggle-icon');
   var labelEl = document.getElementById('theme-toggle-label');
@@ -872,7 +872,7 @@ function applyTheme(theme){
 }
 
 function initTheme(){
-  var saved=localStorage.getItem('dmand_theme')||'light';
+  var saved=window.localStorage.getItem('dmand_theme')||'light';
   applyTheme(saved);
 }
 
@@ -2711,7 +2711,7 @@ function toggleSidebar(){
   var btn=document.getElementById('sidebar-toggle-btn');
   var isCollapsed=sb.classList.toggle('collapsed');
   if(btn){ btn.textContent=isCollapsed?'›':'‹'; btn.title=isCollapsed?'Expand sidebar':'Collapse sidebar'; }
-  try{ localStorage.setItem('dmand_sidebar_collapsed', isCollapsed?'1':'0'); }catch(e){}
+  try{ window.localStorage.setItem('dmand_sidebar_collapsed', isCollapsed?'1':'0'); }catch(e){}
 }
 
 var FUNCTION_MIGRATION = {
@@ -2736,7 +2736,7 @@ function migratePersonaFunctions(){
 
 function initSidebarState(){
   try{
-    var collapsed=localStorage.getItem('dmand_sidebar_collapsed');
+    var collapsed=window.localStorage.getItem('dmand_sidebar_collapsed');
     if(collapsed==='1'){
       var sb=document.querySelector('.sidebar');
       var btn=document.getElementById('sidebar-toggle-btn');
@@ -4187,7 +4187,7 @@ function updateMetrics(){
 function loadSettingsUI(){
   document.getElementById('s-poll-interval').value=DB.settings.pollInterval||30;
   document.getElementById('s-lookback').value=DB.settings.lookback||'3d';
-  var _storedProxy=localStorage.getItem('dmand_proxy_url')||(DB.settings&&DB.settings.proxyUrl)||'http://localhost:8765';
+  var _storedProxy=window.localStorage.getItem('dmand_proxy_url')||(DB.settings&&DB.settings.proxyUrl)||'http://localhost:8765';
   document.getElementById('s-proxy-url').value=_storedProxy;
   if(_storedProxy&&_storedProxy!=='http://localhost:8765'){ PROXY=_storedProxy; }
 }
@@ -4195,7 +4195,7 @@ function loadSettingsUI(){
 function saveProxyUrl(){
   var val=(document.getElementById('s-proxy-url').value||'').trim().replace(/\/$/,'');
   if(!val){showAlert('Enter a proxy URL.','error');return;}
-  localStorage.setItem('dmand_proxy_url',val);
+  window.localStorage.setItem('dmand_proxy_url',val);
   DB.settings.proxyUrl=val; // persist to KV too
   save();
   PROXY=val;
