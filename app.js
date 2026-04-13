@@ -1,5 +1,3 @@
-
-
 const DEFAULT_PROXY = 'http://localhost:8765';
 let PROXY = localStorage.getItem('dmand_proxy_url') || DEFAULT_PROXY;
 const LS_KEY = 'dmand_v2';
@@ -262,7 +260,7 @@ function init() {
   initTheme(); initSidebarState(); migratePersonaFunctions(); renderAll(); loadSettingsUI(); startPollTimer(); renderTemplates(); loadOAIKeyUI(); loadFullenrichKeyUI(); loadCrustdataKeyUI(); loadAutoboundKeysUI(); loadHeyreachKeysUI(); loadSmartleadKeyUI(); loadOutreachSettingsUI(); renderCampaignList();
   showPage('home', document.querySelector('.nav-item'));
   var oldJunkCount=DB.events.filter(function(e){return e.type==='completion'||e.type==='error';}).length;
-  if(oldJunkCount){ DB.events=DB.events.filter(function(e){return e.type!=='completion'&&e.type!=='error';}); if(DB.signals.length||DB.events.length) save(); renderEvents(); log('Purged '+oldJunkCount+' stale completion/error event(s) from storage (dedup fix)','amber'); }
+  if(oldJunkCount){ DB.events=DB.events.filter(function(e){return e.type!=='completion'&&e.type!=='error';}); if(DB.signals.length||DB.events.length) setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0); log('Purged '+oldJunkCount+' stale completion/error event(s) from storage (dedup fix)','amber'); }
 
   runContentDedup();
   setTimeout(function(){
@@ -877,7 +875,7 @@ function showPage(name,el) {
   const titles={home:'Home',signals:'Signals',events:'Events',companies:'Companies',contacts:'Contacts',campaigns:'Campaigns',keys:'API Keys',icp:'ICP Personas',settings:'Settings'};
   document.getElementById('page-title').textContent=titles[name]||name;
   if(name==='home') renderHome();
-  if(name==='events') renderEvents();
+  if(name==='events') if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
   if(name==='companies') renderCompanies();
   if(name==='contacts') renderContacts();
   if(name==='signals') fetchAllMonitorHealth();
@@ -2402,7 +2400,11 @@ async function pollSignal(sig){
 
   let real=0,completions=0,errors=0,dupes=0;
 
+  // Process events with periodic yields to keep browser responsive
+  let _batchCount=0;
   for(const ev of rawEvents){
+    _batchCount++;
+    if(_batchCount%10===0) await new Promise(r=>setTimeout(r,0)); // yield every 10 events
     const evType=(ev.type||'').toLowerCase();
 
     if(evType==='completion'||(ev.monitor_ts&&!ev.output&&evType!=='event')){
@@ -2499,10 +2501,18 @@ async function pollAllNow(){
   const startTime = Date.now();
   document.getElementById('poll-indicator').style.display='flex';
 
-  const results = await Promise.all(active.map(sig => pollSignal(sig).catch(e=>{
-    log('Unhandled error polling "'+sig.name+'": '+e.message,'red');
-    return {real:0,completions:0,errors:1};
-  })));
+  // Sequential polling — prevents 6 simultaneous large responses blocking main thread
+  const results = [];
+  for(const sig of active){
+    try{
+      const r = await pollSignal(sig);
+      results.push(r);
+    }catch(e){
+      log('Unhandled error polling "'+sig.name+'": '+e.message,'red');
+      results.push({real:0,completions:0,errors:1});
+    }
+    await new Promise(r=>setTimeout(r,0)); // yield between each monitor
+  }
 
   const elapsed = ((Date.now()-startTime)/1000).toFixed(1);
   let totalReal=0, totalComp=0, totalErr=0;
@@ -2522,7 +2532,12 @@ async function pollAllNow(){
   document.getElementById('last-poll').textContent='polled '+istTime(new Date().toISOString());
   document.getElementById('poll-indicator').style.display='none';
   pollRunning = false; // release lock
-  save(); updateMetrics(); renderEvents();
+  // Defer heavy post-poll work to keep UI responsive
+  setTimeout(function(){
+    save();
+    updateMetrics();
+    if(currentPage === 'events' || currentPage === 'home') renderEvents();
+  }, 0);
 
   log('── Poll done in '+elapsed+'s: '+totalReal+' new signal'+(totalReal!==1?'s':'')+' | '+totalComp+' completions | '+totalErr+' API errors ──',
     totalReal>0?'green':totalErr>0?'amber':'blue');
@@ -2604,7 +2619,7 @@ async function pollOneSignal(id){
   const r=await pollSignal(sig);
   document.getElementById('poll-indicator').style.display='none';
   DB.meta.lastPoll=new Date().toISOString();
-  save(); updateMetrics(); renderEvents();
+  save(); updateMetrics(); if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
   if(r.real>0) showAlert('🎯 '+r.real+' new event(s) for "'+sig.name+'"!','success');
   else if(r.errors>0) showAlert('Monitor error for "'+sig.name+'" — check Activity log','error');
   else{
@@ -2623,12 +2638,12 @@ function startPollTimer(){
 
 function toggleEventGroup(domain){
   _expandedEventGroups[domain] = _expandedEventGroups[domain] === false ? true : false;
-  renderEvents();
+  if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
 }
 
 function toggleEventDetail(eventId){
   _expandedEvents[eventId] = !_expandedEvents[eventId];
-  renderEvents();
+  if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
 }
 
 function logoImgError(img){
@@ -2722,7 +2737,7 @@ function updateNextPoll(){
 function toggleCompletions(){
   showCompletions=!showCompletions;
   document.getElementById('show-completions-toggle').className='toggle'+(showCompletions?' on':'');
-  renderEvents();
+  if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
 }
 
 var _editingPersonaId = null;
@@ -3585,7 +3600,7 @@ async function saveSignalEdit(id){
       await new Promise(r=>setTimeout(r, 1500)); // let Parallel index the new monitor
       await pollSignal(sig);
       DB.settings.lookback = savedLookback;
-      save(); renderEvents(); updateMetrics();
+      setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0); updateMetrics();
       showAlert('Catch-up complete — new signals (if any) are now in Events.','info', 6000);
     } else {
       sig.status = 'error';
@@ -4156,7 +4171,7 @@ function savePollSettings(){
   DB.settings.lookback=document.getElementById('s-lookback').value;
   startPollTimer(); save(); showAlert('Poll settings saved.','success');
 }
-function clearEvents(){ if(!confirm('Clear all events?')) return; DB.events=[]; saveAndSync(); renderEvents(); updateMetrics(); }
+function clearEvents(){ if(!confirm('Clear all events?')) return; DB.events=[]; saveAndSync(); if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0); updateMetrics(); }
 
 function updateEventSelection(){
   var cbs=document.querySelectorAll('.event-row-cb:checked');
@@ -4172,7 +4187,7 @@ function deleteSelectedEvents(){
   if(!eids.length) return;
   if(!confirm('Delete '+eids.length+' selected event(s)?')) return;
   DB.events=DB.events.filter(function(e){return eids.indexOf(e.event_id)<0;});
-  saveAndSync(); renderEvents(); updateMetrics();
+  saveAndSync(); if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0); updateMetrics();
   updateEventSelection();
   showAlert(eids.length+' event(s) deleted.','success',3000);
 }
@@ -4182,7 +4197,7 @@ function clearResultsData(){
   DB.companies = [];
   DB.contacts  = [];
   saveAndSync();
-  renderEvents(); renderContacts(); renderCompanies(); updateMetrics();
+  if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0); renderContacts(); renderCompanies(); updateMetrics();
   showAlert('✓ Events, companies and contacts cleared. Hit Poll now to re-collect from Parallel.', 'success', 8000);
   log('🗑 Results cleared — events/companies/contacts wiped. Signals and keys intact.', 'amber');
 }
@@ -4693,7 +4708,7 @@ async function runQualifierOnAll(){
       }
     } else { no++; }
   }
-  save(); renderEvents();
+  setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
   if(st) st.textContent='Done: '+yes+' qualified, '+no+' skipped';
   if(btn){btn.disabled=false;btn.textContent='Run on all unqualified events';}
   showAlert(yes+' event(s) qualified and sent to Super Enrich','success');
@@ -5879,7 +5894,7 @@ async function superEnrichEvent(eventId){
       log('Crustdata: ✗ Out of credits (402) — top up at crustdata.com','red');
       showAlert('Crustdata out of credits — please top up your account','error',0);
       ev.superEnrichment={status:'credit_error',message:'Out of Crustdata credits (402)'};
-      save(); renderEvents();
+      setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
       throw new Error('CRUSTDATA_402');
     }
     if(!res.ok) return null;
@@ -5913,7 +5928,7 @@ async function superEnrichEvent(eventId){
     if(!match||!match.company_data){
       log('Crustdata super enrich: ✗ no match for domain="'+domain+'" linkedin="'+linkedinUrl+'" — all strategies exhausted','red');
       ev.superEnrichment={status:'error',message:'No company data found for '+(domain||linkedinUrl)+'. Raw: '+rawText.slice(0,200),exhausted:true};
-      save(); renderEvents();
+      setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
       return;
     }
     log('Crustdata super enrich: ✓ matched via '+( match.match_type||'unknown')+' confidence='+( match.confidence_score||'?'),'green');
@@ -5991,7 +6006,7 @@ async function superEnrichEvent(eventId){
 
     save();
     document.getElementById('nb-companies').textContent=(DB.companies||[]).length;
-    renderEvents();
+    if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
     renderCompanies();
     showAlert('Super Enrich done for '+domain+'!','success');
     log('Crustdata: '+domain+' — '+compEntry.company_name+' | '+compEntry.industry,'green');
@@ -6002,7 +6017,7 @@ async function superEnrichEvent(eventId){
       : e.name==='TypeError' && e.message.includes('fetch') ? 'Network error — check proxy is running and can reach api.crustdata.com'
       : e.message;
     ev.superEnrichment={status:'error',message:errMsg};
-    save(); renderEvents();
+    setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
     log('Crustdata error: '+errMsg,'red');
     showAlert('Super Enrich failed: '+errMsg,'error',8000);
   }
@@ -6204,7 +6219,7 @@ function renderCompanies(){
 
 function renderAll(){
   requestAnimationFrame(function(){
-    renderSignals(); renderEvents(); renderKeys(); renderPersonas();
+    renderSignals(); if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0); renderKeys(); renderPersonas();
     renderContacts(); renderCompanies(); updateMetrics(); renderLog();
   });
 }
@@ -6338,7 +6353,7 @@ Return ONLY valid JSON, no markdown, no explanation:
 
     ev.qualified=isQualified?'yes':'no';
 
-    save(); renderEnrichPanel(eventId); renderEvents();
+    save(); renderEnrichPanel(eventId); if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0);
 
     if(isQualified&&(!ev.superEnrichment||ev.superEnrichment.status!=='done')){
       log('ICP match — auto Super Enrich: '+ev.signal_name.slice(0,30),'green');
@@ -6359,7 +6374,7 @@ Return ONLY valid JSON, no markdown, no explanation:
           if(isYes&&(!ev.superEnrichment||ev.superEnrichment.status!=='done')){
             setTimeout(function(){superEnrichEvent(ev.event_id);},1000);
           }
-          save(); renderEvents();
+          setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
         });
       }
     } else {
@@ -6407,7 +6422,7 @@ async function enrichEventLegacy(eventId){
         if(isYes&&(!ev.superEnrichment||ev.superEnrichment.status!=='done')){
           setTimeout(function(){superEnrichEvent(ev.event_id);},1000);
         }
-        save(); renderEvents();
+        setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0);
       });
     }
   }catch(err){ev.enrichment={status:'error',message:err.message};save();renderEnrichPanel(eventId);}
@@ -6415,7 +6430,7 @@ async function enrichEventLegacy(eventId){
 
 function renderEnrichPanel(eventId){
   const panel=document.getElementById('enrich-panel-'+eventId);
-  if(!panel){ renderEvents(); return; }
+  if(!panel){ if(currentPage==='events'||currentPage==='home') setTimeout(renderEvents, 0); return; }
   const ev=DB.events.find(e=>e.event_id===eventId);
   if(!ev) return;
   const enr=ev.enrichment;
@@ -6835,7 +6850,7 @@ function copyLog(){
   });
 }
 
-window.resetAllEnrichment=function(){ DB.events.forEach(e=>e.enrichment=null); save(); renderEvents(); console.log('All enrichments reset.'); };
+window.resetAllEnrichment=function(){ DB.events.forEach(e=>e.enrichment=null); setTimeout(function(){ save(); if(currentPage==='events'||currentPage==='home') renderEvents(); }, 0); console.log('All enrichments reset.'); };
 
 function addHeyreachKey(){
   var val=document.getElementById('new-hr-key').value.trim();
