@@ -1,4 +1,3 @@
-
 // ── Dmand Poll Worker — runs on background thread ──
 // Receives: {type:'poll', signals:[], proxy:'', apiKey:'', lookback:''}
 // Sends back: {type:'result', signalId:'', newEvents:[], completions:0}
@@ -10,7 +9,8 @@ self.onmessage = async function(e) {
 
   let totalNew = 0, totalComp = 0;
 
-  for(const sig of signals){
+  // Poll ALL monitors simultaneously inside worker (parallel is safe here - background thread)
+  async function fetchSignal(sig){
     try {
       const url = proxy + '/v1alpha/monitors/' + sig.monitor_id + '/events?lookback=' + (lookback||'3d');
       const resp = await fetch(url, {
@@ -25,7 +25,7 @@ self.onmessage = async function(e) {
 
       if(!resp.ok){
         self.postMessage({type:'error', signalId:sig.id, status:resp.status});
-        continue;
+        return {new:0, comp:0};
       }
 
       const data = await resp.json();
@@ -37,14 +37,12 @@ self.onmessage = async function(e) {
       for(const ev of rawEvents){
         const evType = (ev.type||'').toLowerCase();
         if(evType === 'completion' || (ev.monitor_ts && !ev.output && evType !== 'event')){
-          completions++;
-          continue;
+          completions++; continue;
         }
         if(evType === 'error'){ completions++; continue; }
         if(evType !== 'event') continue;
 
-        // Build event ID
-        const eid = ev.event_id || ev.event_group_id || 
+        const eid = ev.event_id || ev.event_group_id ||
           ('ev_' + sig.id + '_' + (ev.output||'').slice(0,32).replace(/\W/g,''));
 
         newEvents.push({
@@ -63,10 +61,6 @@ self.onmessage = async function(e) {
         });
       }
 
-      totalNew += newEvents.length;
-      totalComp += completions;
-
-      // Send results for this signal back to main thread
       self.postMessage({
         type: 'signal_result',
         signalId: sig.id,
@@ -76,13 +70,16 @@ self.onmessage = async function(e) {
         rawCount: rawEvents.length
       });
 
-      // Tiny yield between monitors
-      await new Promise(r => setTimeout(r, 50));
+      return {new: newEvents.length, comp: completions};
 
     } catch(err) {
       self.postMessage({type:'error', signalId:sig.id, message:err.message});
+      return {new:0, comp:0};
     }
   }
 
+  // Fire all monitors in parallel — worker thread, won't block UI
+  const allResults = await Promise.all(signals.map(fetchSignal));
+  allResults.forEach(r => { totalNew += r.new; totalComp += r.comp; });
   self.postMessage({type:'done', totalNew, totalComp});
 };
